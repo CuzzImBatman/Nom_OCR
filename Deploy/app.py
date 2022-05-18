@@ -2,7 +2,7 @@ from http.client import OK
 import numpy as np
 import cv2
 import os
-from utils import *
+#from utils import *
 from utils import _nms
 import json
 from flask import Flask, request, render_template, redirect, send_file
@@ -12,12 +12,14 @@ import torch
 from torch.autograd import Variable
 import torchvision
 from torchvision.ops import nms 
-from PIL import Image
+from PIL import Image 
 import numpy as np
 from skimage.draw import rectangle_perimeter
 #from flask_caching import Cache
 
 from models.HRCenterNet import HRCenterNet
+from tool.denoising_and_bens_preprocessing import denoise_and_bens_prepro
+
 input_size = 512
 output_size = 128
 
@@ -28,11 +30,12 @@ test_tx = torchvision.transforms.Compose([
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('divece: ', device)
-checkpoint = torch.load('models/HRCenterNet.pth.tar', map_location="cpu")    
+checkpoint = torch.load('models/checkpoint/HRCenterNet.pth.tar', map_location="cpu")    
     
 model = HRCenterNet()
 model.load_state_dict(checkpoint['model'])
 model.eval()
+
 if torch.cuda.is_available():
     model.cuda()
 # Initialize
@@ -67,7 +70,7 @@ def predict():
         if os.path.exists(f"static/save/last_{index}.jpg"):
             os.remove(f"static/save/last_{index}.jpg")
         else:
-            print("The file does not exist")
+            print("The file does not exist") 
         return redirect(request.url)
 #     else:
 #         with app.app_context():
@@ -92,17 +95,20 @@ def predict():
                 os.remove('static/save/'+file) 
         cv2.imwrite(f'static/save/last_{index}.jpg', image)
         image = Image.open(f'static/save/last_{index}.jpg').convert("RGB")
-        image_tensor = test_tx(image)
+        denoised = denoise_and_bens_prepro(image)
+        image_tensor = test_tx(denoised)
         image_tensor = image_tensor.unsqueeze_(0)
         inp = Variable(image_tensor)
-        inp = inp.to(device, dtype=torch.float)
-        predict = model(inp)
-        out_img = _nms( image, predict, nms_score=0.3, iou_threshold=0.1)
-        Image.fromarray(out_img).save(f'static/save/test_{index}.jpg')
+        inp = inp.to(device, dtype=torch.float) 
+        predict = model(inp) 
+        reg=  Image.new('RGB', image.size)
+        out_img,reg = _nms( image, predict, nms_score=0.3, iou_threshold=0.1, reg=reg)
+        Image.fromarray(out_img).save(f'static/save/dec_{index}.jpg')
+        Image.fromarray(np.asarray(reg)).save(f'static/save/reg_{index}.jpg')
         #test=Image.fromarray(out_img).show()
         my_dict = {
-        'dec': f'static/save/last_{index}.jpg',
-        'reg': f'static/save/test_{index}.jpg'
+        'dec': f'static/save/dec_{index}.jpg',
+        'reg': f'static/save/reg_{index}.jpg'
         
         }
         x = json.dumps(my_dict)
